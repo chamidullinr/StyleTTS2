@@ -47,14 +47,22 @@ class VKDistribution(Distribution):
     ):
         self.min_value = min_value
         self.max_value = max_value
-        self.sigma_data = sigma_data
+        self.sigma_data = torch.tensor(sigma_data, dtype=torch.float32)
+        self.min_cdf = torch.tensor(
+            atan(self.min_value / sigma_data) * 2 / pi,
+            dtype=torch.float32
+        )
+        self.max_cdf = torch.tensor(
+            atan(self.max_value / sigma_data) * 2 / pi,
+            dtype=torch.float32
+        )
 
     def __call__(
         self, num_samples: int, device: torch.device = torch.device("cpu")
     ) -> Tensor:
-        sigma_data = self.sigma_data
-        min_cdf = atan(self.min_value / sigma_data) * 2 / pi
-        max_cdf = atan(self.max_value / sigma_data) * 2 / pi
+        sigma_data = self.sigma_data.to(device)
+        max_cdf = self.max_cdf.to(device)
+        min_cdf = self.min_cdf.to(device)
         u = (max_cdf - min_cdf) * torch.randn((num_samples,), device=device) + min_cdf
         return torch.tan(u * pi / 2) * sigma_data
 
@@ -485,16 +493,16 @@ class ADPM2Sampler(Sampler):
 
     def __init__(self, rho: float = 1.0):
         super().__init__()
-        self.rho = rho
+        self.rho = torch.tensor(rho, dtype=torch.float32)
 
-    def get_sigmas(self, sigma: float, sigma_next: float) -> Tuple[float, float, float]:
-        r = self.rho
-        sigma_up = sqrt(sigma_next ** 2 * (sigma ** 2 - sigma_next ** 2) / sigma ** 2)
-        sigma_down = sqrt(sigma_next ** 2 - sigma_up ** 2)
+    def get_sigmas(self, sigma: Tensor, sigma_next: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
+        r = self.rho.to(sigma.device)
+        sigma_up = torch.sqrt(sigma_next ** 2 * (sigma ** 2 - sigma_next ** 2) / sigma ** 2)
+        sigma_down = torch.sqrt(sigma_next ** 2 - sigma_up ** 2)
         sigma_mid = ((sigma ** (1 / r) + sigma_down ** (1 / r)) / 2) ** r
         return sigma_up, sigma_down, sigma_mid
 
-    def step(self, x: Tensor, fn: Callable, sigma: float, sigma_next: float) -> Tensor:
+    def step(self, x: Tensor, fn: Callable, sigma: Tensor, sigma_next: Tensor) -> Tensor:
         # Sigma steps
         sigma_up, sigma_down, sigma_mid = self.get_sigmas(sigma, sigma_next)
         # Derivative at sigma (∂x/∂sigma)
@@ -506,7 +514,7 @@ class ADPM2Sampler(Sampler):
         # Denoise to next
         x = x + d_mid * (sigma_down - sigma)
         # Add randomness
-        x_next = x + torch.randn_like(x) * sigma_up
+        x_next = x + torch.randn_like(x).to(sigma.device) * sigma_up
         return x_next
 
     def forward(
@@ -558,6 +566,7 @@ class DiffusionSampler(nn.Module):
         clamp: bool = True,
     ):
         super().__init__()
+        self.diffusion = diffusion
         self.denoise_fn = diffusion.denoise_fn
         self.sampler = sampler
         self.sigma_schedule = sigma_schedule
@@ -597,6 +606,7 @@ class DiffusionInpainter(nn.Module):
         sigma_schedule: Schedule,
     ):
         super().__init__()
+        self.diffusion = diffusion
         self.denoise_fn = diffusion.denoise_fn
         self.num_steps = num_steps
         self.num_resamples = num_resamples

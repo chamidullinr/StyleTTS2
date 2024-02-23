@@ -21,7 +21,15 @@ class AdaIN1d(nn.Module):
         h = self.fc(s)
         h = h.view(h.size(0), h.size(1), 1)
         gamma, beta = torch.chunk(h, chunks=2, dim=1)
-        return (1 + gamma) * self.norm(x) + beta
+
+        # use custom instance normalization for onnx export
+        # implementation in PyTorch seems to have some bug which prevents onnx export
+        x_std = torch.sqrt(x.var(axis=2, keepdim=True, unbiased=False) + 1e-5)
+        x_norm = (x - x.mean(axis=2, keepdim=True)) / x_std
+
+        # return (1 + gamma) * self.norm(x) + beta
+        return (1 + gamma) * x_norm + beta
+
 
 class AdaINResBlock1(torch.nn.Module):
     def __init__(self, channels, kernel_size=3, dilation=(1, 3, 5), style_dim=64):

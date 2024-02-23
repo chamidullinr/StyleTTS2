@@ -311,7 +311,7 @@ class TextEncoder(nn.Module):
             
         x = x.transpose(1, 2)  # [B, T, chn]
 
-        input_lengths = input_lengths.cpu().numpy()
+        input_lengths = input_lengths.cpu()  #.numpy()
         x = nn.utils.rnn.pack_padded_sequence(
             x, input_lengths, batch_first=True, enforce_sorted=False)
 
@@ -345,6 +345,15 @@ class TextEncoder(nn.Module):
         return mask
 
 
+# class InstanceNormAlternative(nn.InstanceNorm2d):
+
+#     def forward(self, inp: Tensor) -> Tensor:
+#         self._check_input_dim(inp)
+
+#         desc = 1 / (input.var(axis=[2, 3], keepdim=True, unbiased=False) + self.eps) ** 0.5
+#         retval = (input - input.mean(axis=[2, 3], keepdim=True)) * desc
+#         return retval
+
 
 class AdaIN1d(nn.Module):
     def __init__(self, style_dim, num_features):
@@ -356,7 +365,14 @@ class AdaIN1d(nn.Module):
         h = self.fc(s)
         h = h.view(h.size(0), h.size(1), 1)
         gamma, beta = torch.chunk(h, chunks=2, dim=1)
-        return (1 + gamma) * self.norm(x) + beta
+
+        # use custom instance normalization for onnx export
+        # implementation in PyTorch seems to have some bug which prevents onnx export
+        x_std = torch.sqrt(x.var(axis=2, keepdim=True, unbiased=False) + 1e-5)
+        x_norm = (x - x.mean(axis=2, keepdim=True)) / x_std
+
+        # return (1 + gamma) * self.norm(x) + beta
+        return (1 + gamma) * x_norm + beta
 
 class UpSample1d(nn.Module):
     def __init__(self, layer_type):
@@ -472,7 +488,7 @@ class ProsodyPredictor(nn.Module):
         text_size = d.shape[1]
         
         # predict duration
-        input_lengths = text_lengths.cpu().numpy()
+        input_lengths = text_lengths.cpu()  # .numpy()
         x = nn.utils.rnn.pack_padded_sequence(
             d, input_lengths, batch_first=True, enforce_sorted=False)
         
@@ -496,7 +512,7 @@ class ProsodyPredictor(nn.Module):
     
     def F0Ntrain(self, x, s):
         x, _ = self.shared(x.transpose(-1, -2))
-        
+
         F0 = x.transpose(-1, -2)
         for block in self.F0:
             F0 = block(F0, s)
@@ -542,13 +558,14 @@ class DurationEncoder(nn.Module):
         x.masked_fill_(masks.unsqueeze(-1).transpose(0, 1), 0.0)
                 
         x = x.transpose(0, 1)
-        input_lengths = text_lengths.cpu().numpy()
+        input_lengths = text_lengths.cpu()  # .numpy()
         x = x.transpose(-1, -2)
         
         for block in self.lstms:
             if isinstance(block, AdaLayerNorm):
                 x = block(x.transpose(-1, -2), style).transpose(-1, -2)
-                x = torch.cat([x, s.permute(1, -1, 0)], axis=1)
+                # x = torch.cat([x, s.permute(1, -1, 0)], axis=1)
+                x = torch.cat([x, s.permute(1, 2, 0)], axis=1)
                 x.masked_fill_(masks.unsqueeze(-1).transpose(-1, -2), 0.0)
             else:
                 x = x.transpose(-1, -2)

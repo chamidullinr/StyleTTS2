@@ -684,10 +684,10 @@ class FixedEmbedding(nn.Module):
         self.embedding = nn.Embedding(max_length, features)
 
     def forward(self, x: Tensor) -> Tensor:
-        batch_size, length, device = *x.shape[0:2], x.device
-        assert_message = "Input sequence length must be <= max_length"
-        assert length <= self.max_length, assert_message
-        position = torch.arange(length, device=device)
+        batch_size, length = x.shape[0:2]
+        # assert_message = "Input sequence length must be <= max_length"
+        # assert length <= self.max_length, assert_message
+        position = torch.arange(length, device=x.device)
         fixed_embedding = self.embedding(position)
         fixed_embedding = repeat(fixed_embedding, "n d -> b n d", b=batch_size)
         return fixed_embedding
